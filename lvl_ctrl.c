@@ -9,12 +9,14 @@
 #include <stdlib.h>
 #include "ssd1306.h"
 #include "font.h"
+#include "pico/bootrom.h"
 
-#define LED_PIN 12
-#define BOTAO_A 5
-#define BOTAO_JOY 22
-#define JOYSTICK_X 26
-#define JOYSTICK_Y 27
+#define btn_b 6
+#define led_pin 12
+#define btn_a 5
+#define btn_joy 22
+#define joy_x 26
+#define joy_y 27
 
 #define WIFI_SSID "Seu SSID"
 #define WIFI_PASS "Sua Senha"
@@ -81,171 +83,41 @@ const char HTML_BODY[] =
 
     "</body></html>";
 
-struct http_state
-{
+    struct http_state{
     char response[4096];
     size_t len;
     size_t sent;
 };
 
-static err_t http_sent(void *arg, struct tcp_pcb *tpcb, u16_t len)
-{
-    struct http_state *hs = (struct http_state *)arg;
-    hs->sent += len;
-    if (hs->sent >= hs->len)
-    {
-        tcp_close(tpcb);
-        free(hs);
-    }
-    return ERR_OK;
-}
+void setup_gpio();
+static err_t http_sent(void *arg, struct tcp_pcb *tpcb, u16_t len);
+static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err);
+static err_t connection_callback(void *arg, struct tcp_pcb *newpcb, err_t err);
+static void start_http_server(void);
+void gpio_irq_handler(uint gpio, uint32_t events);
 
-static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err)
-{
-    if (!p)
-    {
-        tcp_close(tpcb);
-        return ERR_OK;
-    }
+int main(){
+    setup_gpio();
 
-    char *req = (char *)p->payload;
-    struct http_state *hs = malloc(sizeof(struct http_state));
-    if (!hs)
-    {
-        pbuf_free(p);
-        tcp_close(tpcb);
-        return ERR_MEM;
-    }
-    hs->sent = 0;
-
-    if (strstr(req, "GET /led/on"))
-    {
-        gpio_put(LED_PIN, 1);
-        const char *txt = "Ligado";
-        hs->len = snprintf(hs->response, sizeof(hs->response),
-                           "HTTP/1.1 200 OK\r\n"
-                           "Content-Type: text/plain\r\n"
-                           "Content-Length: %d\r\n"
-                           "Connection: close\r\n"
-                           "\r\n"
-                           "%s",
-                           (int)strlen(txt), txt);
-    }
-    else if (strstr(req, "GET /led/off"))
-    {
-        gpio_put(LED_PIN, 0);
-        const char *txt = "Desligado";
-        hs->len = snprintf(hs->response, sizeof(hs->response),
-                           "HTTP/1.1 200 OK\r\n"
-                           "Content-Type: text/plain\r\n"
-                           "Content-Length: %d\r\n"
-                           "Connection: close\r\n"
-                           "\r\n"
-                           "%s",
-                           (int)strlen(txt), txt);
-    }
-    else if (strstr(req, "GET /estado"))
-    {
-        adc_select_input(0);
-        uint16_t x = adc_read();
-        adc_select_input(1);
-        uint16_t y = adc_read();
-        int botao = !gpio_get(BOTAO_A);
-        int joy = !gpio_get(BOTAO_JOY);
-
-        char json_payload[96];
-        int json_len = snprintf(json_payload, sizeof(json_payload),
-                                "{\"led\":%d,\"x\":%d,\"y\":%d,\"botao\":%d,\"joy\":%d}\r\n",
-                                gpio_get(LED_PIN), x, y, botao, joy);
-
-        printf("[DEBUG] JSON: %s\n", json_payload);
-
-        hs->len = snprintf(hs->response, sizeof(hs->response),
-                           "HTTP/1.1 200 OK\r\n"
-                           "Content-Type: application/json\r\n"
-                           "Content-Length: %d\r\n"
-                           "Connection: close\r\n"
-                           "\r\n"
-                           "%s",
-                           json_len, json_payload);
-    }
-    else
-    {
-        hs->len = snprintf(hs->response, sizeof(hs->response),
-                           "HTTP/1.1 200 OK\r\n"
-                           "Content-Type: text/html\r\n"
-                           "Content-Length: %d\r\n"
-                           "Connection: close\r\n"
-                           "\r\n"
-                           "%s",
-                           (int)strlen(HTML_BODY), HTML_BODY);
-    }
-
-    tcp_arg(tpcb, hs);
-    tcp_sent(tpcb, http_sent);
-
-    tcp_write(tpcb, hs->response, hs->len, TCP_WRITE_FLAG_COPY);
-    tcp_output(tpcb);
-
-    pbuf_free(p);
-    return ERR_OK;
-}
-
-static err_t connection_callback(void *arg, struct tcp_pcb *newpcb, err_t err)
-{
-    tcp_recv(newpcb, http_recv);
-    return ERR_OK;
-}
-
-static void start_http_server(void)
-{
-    struct tcp_pcb *pcb = tcp_new();
-    if (!pcb)
-    {
-        printf("Erro ao criar PCB TCP\n");
-        return;
-    }
-    if (tcp_bind(pcb, IP_ADDR_ANY, 80) != ERR_OK)
-    {
-        printf("Erro ao ligar o servidor na porta 80\n");
-        return;
-    }
-    pcb = tcp_listen(pcb);
-    tcp_accept(pcb, connection_callback);
-    printf("Servidor HTTP rodando na porta 80...\n");
-}
-
-#include "pico/bootrom.h"
-#define BOTAO_B 6
-void gpio_irq_handler(uint gpio, uint32_t events)
-{
-    reset_usb_boot(0, 0);
-}
-
-int main()
-{
-    gpio_init(BOTAO_B);
-    gpio_set_dir(BOTAO_B, GPIO_IN);
-    gpio_pull_up(BOTAO_B);
-    gpio_set_irq_enabled_with_callback(BOTAO_B, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
+    gpio_set_irq_enabled_with_callback(btn_b, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
 
     stdio_init_all();
     sleep_ms(2000);
 
-    gpio_init(LED_PIN);
-    gpio_set_dir(LED_PIN, GPIO_OUT);
+    gpio_init(led_pin);
+    gpio_set_dir(led_pin, GPIO_OUT);
 
-    gpio_init(BOTAO_A);
-    gpio_set_dir(BOTAO_A, GPIO_IN);
-    gpio_pull_up(BOTAO_A);
+    gpio_init(btn_a);
+    gpio_set_dir(btn_a, GPIO_IN);
+    gpio_pull_up(btn_a);
 
-    gpio_init(BOTAO_JOY);
-    gpio_set_dir(BOTAO_JOY, GPIO_IN);
-    gpio_pull_up(BOTAO_JOY);
+    gpio_init(btn_joy);
+    gpio_set_dir(btn_joy, GPIO_IN);
+    gpio_pull_up(btn_joy);
 
     adc_init();
-    adc_gpio_init(JOYSTICK_X);
-    adc_gpio_init(JOYSTICK_Y);
+    adc_gpio_init(joy_x);
+    adc_gpio_init(joy_y);
 
     i2c_init(I2C_PORT_DISP, 400 * 1000);
     gpio_set_function(I2C_SDA_DISP, GPIO_FUNC_I2C);
@@ -316,8 +188,8 @@ int main()
         ssd1306_draw_string(&ssd, str_x, 8, 52);                     // Desenha uma string
         ssd1306_line(&ssd, 84, 37, 84, 60, cor);                     // Desenha uma linha vertical
         ssd1306_draw_string(&ssd, str_y, 49, 52);                    // Desenha uma string
-        ssd1306_rect(&ssd, 52, 90, 8, 8, cor, !gpio_get(BOTAO_JOY)); // Desenha um retângulo
-        ssd1306_rect(&ssd, 52, 102, 8, 8, cor, !gpio_get(BOTAO_A));  // Desenha um retângulo
+        ssd1306_rect(&ssd, 52, 90, 8, 8, cor, !gpio_get(btn_joy)); // Desenha um retângulo
+        ssd1306_rect(&ssd, 52, 102, 8, 8, cor, !gpio_get(btn_a));  // Desenha um retângulo
         ssd1306_rect(&ssd, 52, 114, 8, 8, cor, !cor);                // Desenha um retângulo
         ssd1306_send_data(&ssd);                                     // Atualiza o display
 
@@ -326,4 +198,137 @@ int main()
 
     cyw43_arch_deinit();
     return 0;
+}
+
+void setup_gpio(){
+    gpio_init(btn_b);
+    gpio_set_dir(btn_b, GPIO_IN);
+    gpio_pull_up(btn_b);
+}
+
+static err_t http_sent(void *arg, struct tcp_pcb *tpcb, u16_t len){
+    struct http_state *hs = (struct http_state *)arg;
+    hs->sent += len;
+    if (hs->sent >= hs->len)
+    {
+        tcp_close(tpcb);
+        free(hs);
+    }
+    return ERR_OK;
+}
+
+static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err){
+    if (!p)
+    {
+        tcp_close(tpcb);
+        return ERR_OK;
+    }
+
+    char *req = (char *)p->payload;
+    struct http_state *hs = malloc(sizeof(struct http_state));
+    if (!hs)
+    {
+        pbuf_free(p);
+        tcp_close(tpcb);
+        return ERR_MEM;
+    }
+    hs->sent = 0;
+
+    if (strstr(req, "GET /led/on"))
+    {
+        gpio_put(led_pin, 1);
+        const char *txt = "Ligado";
+        hs->len = snprintf(hs->response, sizeof(hs->response),
+                           "HTTP/1.1 200 OK\r\n"
+                           "Content-Type: text/plain\r\n"
+                           "Content-Length: %d\r\n"
+                           "Connection: close\r\n"
+                           "\r\n"
+                           "%s",
+                           (int)strlen(txt), txt);
+    }
+    else if (strstr(req, "GET /led/off"))
+    {
+        gpio_put(led_pin, 0);
+        const char *txt = "Desligado";
+        hs->len = snprintf(hs->response, sizeof(hs->response),
+                           "HTTP/1.1 200 OK\r\n"
+                           "Content-Type: text/plain\r\n"
+                           "Content-Length: %d\r\n"
+                           "Connection: close\r\n"
+                           "\r\n"
+                           "%s",
+                           (int)strlen(txt), txt);
+    }
+    else if (strstr(req, "GET /estado"))
+    {
+        adc_select_input(0);
+        uint16_t x = adc_read();
+        adc_select_input(1);
+        uint16_t y = adc_read();
+        int botao = !gpio_get(btn_a);
+        int joy = !gpio_get(btn_joy);
+
+        char json_payload[96];
+        int json_len = snprintf(json_payload, sizeof(json_payload),
+                                "{\"led\":%d,\"x\":%d,\"y\":%d,\"botao\":%d,\"joy\":%d}\r\n",
+                                gpio_get(led_pin), x, y, botao, joy);
+
+        printf("[DEBUG] JSON: %s\n", json_payload);
+
+        hs->len = snprintf(hs->response, sizeof(hs->response),
+                           "HTTP/1.1 200 OK\r\n"
+                           "Content-Type: application/json\r\n"
+                           "Content-Length: %d\r\n"
+                           "Connection: close\r\n"
+                           "\r\n"
+                           "%s",
+                           json_len, json_payload);
+    }
+    else
+    {
+        hs->len = snprintf(hs->response, sizeof(hs->response),
+                           "HTTP/1.1 200 OK\r\n"
+                           "Content-Type: text/html\r\n"
+                           "Content-Length: %d\r\n"
+                           "Connection: close\r\n"
+                           "\r\n"
+                           "%s",
+                           (int)strlen(HTML_BODY), HTML_BODY);
+    }
+
+    tcp_arg(tpcb, hs);
+    tcp_sent(tpcb, http_sent);
+
+    tcp_write(tpcb, hs->response, hs->len, TCP_WRITE_FLAG_COPY);
+    tcp_output(tpcb);
+
+    pbuf_free(p);
+    return ERR_OK;
+}
+
+static err_t connection_callback(void *arg, struct tcp_pcb *newpcb, err_t err){
+    tcp_recv(newpcb, http_recv);
+    return ERR_OK;
+}
+
+static void start_http_server(void){
+    struct tcp_pcb *pcb = tcp_new();
+    if (!pcb)
+    {
+        printf("Erro ao criar PCB TCP\n");
+        return;
+    }
+    if (tcp_bind(pcb, IP_ADDR_ANY, 80) != ERR_OK)
+    {
+        printf("Erro ao ligar o servidor na porta 80\n");
+        return;
+    }
+    pcb = tcp_listen(pcb);
+    tcp_accept(pcb, connection_callback);
+    printf("Servidor HTTP rodando na porta 80...\n");
+}
+
+void gpio_irq_handler(uint gpio, uint32_t events){
+    reset_usb_boot(0, 0);
 }
