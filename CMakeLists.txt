@@ -9,16 +9,22 @@ pico_sdk_init()
 
 include_directories( ${CMAKE_SOURCE_DIR}/lib ) 
 
+
 add_executable(${PROJECT_NAME}  
         lvl_ctrl.c
         lib/ssd1306.c
         lib/HC_SR04.c
         )
 
+pico_generate_pio_header(lvl_ctrl ${CMAKE_CURRENT_LIST_DIR}/ws2812.pio)
+
+
 target_link_libraries(${PROJECT_NAME} 
         pico_stdlib 
         hardware_i2c
         hardware_adc        
+        hardware_pio
+        hardware_gpio
         pico_cyw43_arch_lwip_threadsafe_background
         )
 

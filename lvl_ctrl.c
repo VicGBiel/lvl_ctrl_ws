@@ -4,17 +4,22 @@
 #include "hardware/i2c.h"
 #include "hardware/adc.h"
 #include "hardware/gpio.h"
+#include "hardware/pio.h"
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include "ssd1306.h"
 #include "font.h"
 #include "HC_SR04.h"
+#include "pico/bootrom.h"
+#include "lib/ws2812.h"
+
 
 // Pino da bomba (reutilizando o pino do LED original)
 #define BOMBA_PIN 12 
-#define BOTAO_A 5
-#define BOTAO_JOY 22
+#define BUTTON_A 5
+#define BUTTON_B 6
+#define BUTTON_JOY 22
 #define JOYSTICK_X 26
 #define JOYSTICK_Y 27
 
@@ -29,10 +34,22 @@
 #define TRIG_PIN 17
 #define ECHO_PIN 16
 
+//pinos dos led RGB
+#define LED_RED 13
+#define LED_BLUE 12
+#define LED_GREEN 11
+
 // --- Variáveis Globais para Controle de Nível ---
 float nivel_minimo = 20.0;  // Nível baixo (em cm). Se a distância for MAIOR que isso, a bomba liga.
 float nivel_maximo = 5.0;   // Nível alto (em cm). Se a distância for MENOR que isso, a bomba desliga.
 bool bomba_ligada = false;
+uint64_t last_bomb_time = 0;
+uint64_t current_bomb_time = 0;
+uint32_t max_bomb_time = 5000;
+
+uint64_t volatile last_time = 0;
+
+bool display_msg = false;
 
 // --- HTML Modificado ---
 const char HTML_BODY[] =
@@ -94,12 +111,229 @@ const char HTML_BODY[] =
     "</div>"
     "</body></html>";
 
+
+
+
 struct http_state
 {
     char response[4096];
     size_t len;
     size_t sent;
 };
+
+static err_t http_sent(void *arg, struct tcp_pcb *tpcb, u16_t len);
+static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t err);
+static err_t connection_callback(void *arg, struct tcp_pcb *newpcb, err_t err);
+static void start_http_server(void);
+
+void matrix_control(float lvl);
+
+
+void gpio_irq_handler(uint gpio, uint32_t events)
+{
+
+    uint64_t new_time = to_ms_since_boot(get_absolute_time());
+
+    if(new_time - last_time > 200)
+    {
+       if(gpio == BUTTON_B) 
+       {
+            npClear();
+            reset_usb_boot(0, 0);
+       }
+       if(gpio == BUTTON_A)
+       {
+         display_msg = !display_msg;
+       }
+
+    }
+        
+}
+
+float hc_sr04_distance_cm = 0.0; // Variável global para a distância
+
+int main()
+{
+    adc_init();
+    adc_gpio_init(JOYSTICK_X);
+
+    gpio_init(LED_RED);
+    gpio_init(LED_BLUE);
+    gpio_init(LED_GREEN);
+
+    gpio_set_dir(LED_BLUE, GPIO_OUT);
+    gpio_set_dir(LED_GREEN, GPIO_OUT);
+    gpio_set_dir(LED_RED, GPIO_OUT);
+
+    gpio_init(BUTTON_B);
+    gpio_set_dir(BUTTON_B, GPIO_IN);
+    gpio_pull_up(BUTTON_B);
+
+    gpio_set_irq_enabled_with_callback(BUTTON_B, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
+    gpio_set_irq_enabled_with_callback(BUTTON_A, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
+
+    stdio_init_all();
+    sleep_ms(500);
+
+    // Configura o pino da bomba como saída
+    gpio_init(BOMBA_PIN);
+    gpio_set_dir(BOMBA_PIN, GPIO_OUT);
+
+    // --- O restante das inicializações (botões, ADC, I2C) permanecem ---
+    gpio_init(BUTTON_A);
+    gpio_set_dir(BUTTON_A, GPIO_IN);
+    gpio_pull_up(BUTTON_A);
+
+    gpio_init(BUTTON_JOY);
+    gpio_set_dir(BUTTON_JOY, GPIO_IN);
+    gpio_pull_up(BUTTON_JOY);
+
+    adc_init();
+    adc_gpio_init(JOYSTICK_X);
+    adc_gpio_init(JOYSTICK_Y);
+
+    i2c_init(I2C_PORT_DISP, 400 * 1000);
+    gpio_set_function(I2C_SDA_DISP, GPIO_FUNC_I2C);
+    gpio_set_function(I2C_SCL_DISP, GPIO_FUNC_I2C);
+    gpio_pull_up(I2C_SDA_DISP);
+    gpio_pull_up(I2C_SCL_DISP);
+
+    ssd1306_t ssd;
+    ssd1306_init(&ssd, WIDTH, HEIGHT, false, endereco, I2C_PORT_DISP);
+    ssd1306_config(&ssd);
+    ssd1306_fill(&ssd, false);
+    ssd1306_draw_string(&ssd, "Iniciando Wi-Fi", 0, 0);
+    ssd1306_draw_string(&ssd, "Aguarde...", 0, 30);    
+    ssd1306_send_data(&ssd);
+
+    // Iniciando sensor ultrassônico
+    HC_SR04_t hc_sr04; 
+    hc_sr04_init(&hc_sr04, TRIG_PIN, ECHO_PIN);
+
+    npInit(LED_PIN);        //inicializa matriz de led
+    npClear();              //limpa a matriz
+
+    if (cyw43_arch_init())
+    {
+        ssd1306_fill(&ssd, false);
+        ssd1306_draw_string(&ssd, "WiFi => FALHA", 0, 0);
+        ssd1306_send_data(&ssd);
+        return 1;
+    }
+
+    cyw43_arch_enable_sta_mode();
+    if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASS, CYW43_AUTH_WPA2_AES_PSK, 10000))
+    {
+        ssd1306_fill(&ssd, false);
+        ssd1306_draw_string(&ssd, "WiFi => ERRO", 0, 0);
+        ssd1306_send_data(&ssd);
+        return 1;
+    }
+
+    uint8_t *ip = (uint8_t *)&(cyw43_state.netif[0].ip_addr.addr);
+    char ip_str[24];
+    snprintf(ip_str, sizeof(ip_str), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
+
+    ssd1306_fill(&ssd, false);
+    ssd1306_draw_string(&ssd, "WiFi => OK", 0, 0);
+    ssd1306_draw_string(&ssd, ip_str, 0, 10);
+    ssd1306_send_data(&ssd);
+
+    start_http_server();
+
+    char n_min[10];
+    char n_max[10];
+    char n_at[10];
+
+    float percent_lvl = 0;
+
+    while (true){
+        cyw43_arch_poll();
+
+        // Mede a distância
+        hc_sr04_get_distance(&hc_sr04);
+        hc_sr04_distance_cm = hc_sr04.distance_cm;
+        printf("Distancia: %.2f cm\n", hc_sr04_distance_cm);
+
+        percent_lvl = (hc_sr04_distance_cm/nivel_maximo)*100;
+
+        current_bomb_time = to_ms_since_boot(get_absolute_time());
+
+        // --- Lógica de Controle da Bomba ---
+        // Se a distância medida for maior que o nível mínimo (água baixa), liga a bomba.
+        if (hc_sr04_distance_cm > nivel_minimo) {
+            bomba_ligada = true;
+            last_bomb_time = current_bomb_time;
+        } 
+        // Se a distância medida for menor que o nível máximo (água alta) ou passaram-se 5 segundos com a bomba ligada (5000ms), desliga a bomba.
+        else if (hc_sr04_distance_cm < nivel_maximo || (current_bomb_time - last_bomb_time > max_bomb_time))
+        {
+            bomba_ligada = false;
+        }
+
+       
+       sprintf(n_at, "%.2f%%", percent_lvl);
+        sprintf(n_max, "%.2f", nivel_maximo);
+        sprintf(n_min, "%.2f", nivel_minimo);
+
+        
+        // Atualiza o estado do pino da bomba
+        gpio_put(BOMBA_PIN, bomba_ligada);
+
+        if(!display_msg)
+        {
+            ssd1306_fill(&ssd, false);
+            ssd1306_draw_string(&ssd, "WiFi => OK", 0, 0);
+            ssd1306_draw_string(&ssd, ip_str, 0, 10);
+            ssd1306_send_data(&ssd);
+
+        }else{
+
+            ssd1306_fill(&ssd, false);  // Limpa o display
+            ssd1306_rect(&ssd, 3, 3, 122, 60, true, false); // Desenha um retângulo
+            ssd1306_hline(&ssd, 3, 122, 32, true);
+            ssd1306_vline(&ssd, 61, 3, 60, true);
+
+            if(bomba_ligada)
+            {             
+                ssd1306_draw_string(&ssd, "BOMBA", 13, 6);
+                ssd1306_draw_string(&ssd, "ON", 25, 16);
+            }else
+            {
+                ssd1306_draw_string(&ssd, "BOMBA", 13, 6);
+                ssd1306_draw_string(&ssd, "OFF", 21, 16);
+            }
+
+            ssd1306_draw_string(&ssd, "NIVEL", 75, 6);
+            ssd1306_draw_string(&ssd, n_at, 70, 16);
+            ssd1306_draw_string(&ssd, "N.MAX", 12, 34);
+            ssd1306_draw_string(&ssd, n_max, 8, 46);
+            ssd1306_draw_string(&ssd, "N.MIN", 70, 34);
+            ssd1306_draw_string(&ssd, n_min, 67, 46);
+            ssd1306_send_data(&ssd);  // Atualiza o display
+
+        }
+
+        if(bomba_ligada)
+        {
+            gpio_put(LED_RED, false);
+            gpio_put(LED_GREEN, true);
+        }
+        else{
+            gpio_put(LED_GREEN, false);
+            gpio_put(LED_RED, true);
+        }
+
+        matrix_control(percent_lvl);
+        
+        sleep_ms(50);
+    }
+
+    cyw43_arch_deinit();
+    return 0;
+}
+
+
 
 static err_t http_sent(void *arg, struct tcp_pcb *tpcb, u16_t len)
 {
@@ -216,115 +450,39 @@ static void start_http_server(void)
     printf("Servidor HTTP rodando na porta 80...\n");
 }
 
-#include "pico/bootrom.h"
-#define BOTAO_B 6
-void gpio_irq_handler(uint gpio, uint32_t events)
-{
-    reset_usb_boot(0, 0);
-}
+void matrix_control(float lvl)
+{   
 
-float hc_sr04_distance_cm = 0.0; // Variável global para a distância
+    
 
-int main()
-{
-    gpio_init(BOTAO_B);
-    gpio_set_dir(BOTAO_B, GPIO_IN);
-    gpio_pull_up(BOTAO_B);
-    gpio_set_irq_enabled_with_callback(BOTAO_B, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
-
-    stdio_init_all();
-    sleep_ms(2000);
-
-    // Configura o pino da bomba como saída
-    gpio_init(BOMBA_PIN);
-    gpio_set_dir(BOMBA_PIN, GPIO_OUT);
-
-    // --- O restante das inicializações (botões, ADC, I2C) permanecem ---
-    gpio_init(BOTAO_A);
-    gpio_set_dir(BOTAO_A, GPIO_IN);
-    gpio_pull_up(BOTAO_A);
-
-    gpio_init(BOTAO_JOY);
-    gpio_set_dir(BOTAO_JOY, GPIO_IN);
-    gpio_pull_up(BOTAO_JOY);
-
-    adc_init();
-    adc_gpio_init(JOYSTICK_X);
-    adc_gpio_init(JOYSTICK_Y);
-
-    i2c_init(I2C_PORT_DISP, 400 * 1000);
-    gpio_set_function(I2C_SDA_DISP, GPIO_FUNC_I2C);
-    gpio_set_function(I2C_SCL_DISP, GPIO_FUNC_I2C);
-    gpio_pull_up(I2C_SDA_DISP);
-    gpio_pull_up(I2C_SCL_DISP);
-
-    ssd1306_t ssd;
-    ssd1306_init(&ssd, WIDTH, HEIGHT, false, endereco, I2C_PORT_DISP);
-    ssd1306_config(&ssd);
-    ssd1306_fill(&ssd, false);
-    ssd1306_draw_string(&ssd, "Iniciando Wi-Fi", 0, 0);
-    ssd1306_draw_string(&ssd, "Aguarde...", 0, 30);    
-    ssd1306_send_data(&ssd);
-
-    // Iniciando sensor ultrassônico
-    HC_SR04_t hc_sr04; 
-    hc_sr04_init(&hc_sr04, TRIG_PIN, ECHO_PIN);
-
-    if (cyw43_arch_init())
+    if(lvl <= 1)
     {
-        ssd1306_fill(&ssd, false);
-        ssd1306_draw_string(&ssd, "WiFi => FALHA", 0, 0);
-        ssd1306_send_data(&ssd);
-        return 1;
-    }
+        npClear();
 
-    cyw43_arch_enable_sta_mode();
-    if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASS, CYW43_AUTH_WPA2_AES_PSK, 10000))
+    }else if(lvl <= 20)
+    {   
+        
+        print_frame(frame0, 70, 0, 0);
+
+    }else if(lvl > 20 && lvl <= 40)
     {
-        ssd1306_fill(&ssd, false);
-        ssd1306_draw_string(&ssd, "WiFi => ERRO", 0, 0);
-        ssd1306_send_data(&ssd);
-        return 1;
-    }
-
-    uint8_t *ip = (uint8_t *)&(cyw43_state.netif[0].ip_addr.addr);
-    char ip_str[24];
-    snprintf(ip_str, sizeof(ip_str), "%d.%d.%d.%d", ip[0], ip[1], ip[2], ip[3]);
-
-    ssd1306_fill(&ssd, false);
-    ssd1306_draw_string(&ssd, "WiFi => OK", 0, 0);
-    ssd1306_draw_string(&ssd, ip_str, 0, 10);
-    ssd1306_send_data(&ssd);
-
-    start_http_server();
-
-    while (true){
-        cyw43_arch_poll();
-
-        // Mede a distância
-        hc_sr04_get_distance(&hc_sr04);
-        hc_sr04_distance_cm = hc_sr04.distance_cm;
-        printf("Distancia: %.2f cm\n", hc_sr04_distance_cm);
-
-        // --- Lógica de Controle da Bomba ---
-        // Se a distância medida for maior que o nível mínimo (água baixa), liga a bomba.
-        if (hc_sr04_distance_cm > nivel_minimo) {
-            bomba_ligada = true;
-        } 
-        // Se a distância medida for menor que o nível máximo (água alta), desliga a bomba.
-        else if (hc_sr04_distance_cm < nivel_maximo) {
-            bomba_ligada = false;
-        }
         
-        // Atualiza o estado do pino da bomba
-        gpio_put(BOMBA_PIN, bomba_ligada);
+        print_frame(frame1, 50, 50, 0);
 
-        // O código do display OLED foi comentado para focar na funcionalidade web,
-        // mas pode ser reativado se necessário.
+    }else if(lvl > 40 && lvl <= 60)
+    {
         
-        sleep_ms(500);
-    }
+        print_frame(frame2, 0, 50, 0);
 
-    cyw43_arch_deinit();
-    return 0;
+    }else if(lvl > 60 && lvl <= 95)
+    {
+        
+        print_frame(frame3, 0, 100, 0);
+
+    }else if(lvl > 95)
+    {
+        
+        print_frame(frame4, 0, 0, 100);
+    }
+    npWrite();
 }
