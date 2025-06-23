@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include "ssd1306.h"
 #include "font.h"
+#include "pico/bootrom.h"
 #include "HC_SR04.h"
 #include "pico/bootrom.h"
 #include "lib/ws2812.h"
@@ -23,8 +24,8 @@
 #define JOYSTICK_X 26
 #define JOYSTICK_Y 27
 
-#define WIFI_SSID "Liz Linda"
-#define WIFI_PASS "Lizm2016"
+#define WIFI_SSID "bythesword [2.4GHz]"
+#define WIFI_PASS "30317512"
 
 #define I2C_PORT_DISP i2c1
 #define I2C_SDA_DISP 14
