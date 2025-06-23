@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include "ssd1306.h"
 #include "font.h"
+#include "pico/bootrom.h"
 #include "HC_SR04.h"
 
 // Pino da bomba (reutilizando o pino do LED original)
@@ -26,15 +27,10 @@
 #define I2C_SCL_DISP 15
 #define endereco 0x3C
 
-#define TRIG_PIN 17
 #define ECHO_PIN 16
+#define TRIG_PIN 17
 
-// --- Variáveis Globais para Controle de Nível ---
-float nivel_minimo = 20.0;  // Nível baixo (em cm). Se a distância for MAIOR que isso, a bomba liga.
-float nivel_maximo = 5.0;   // Nível alto (em cm). Se a distância for MENOR que isso, a bomba desliga.
-bool bomba_ligada = false;
 
-// --- HTML Modificado ---
 const char HTML_BODY[] =
     "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Controle de Nivel do Reservatorio</title>"
     "<style>"
@@ -94,8 +90,7 @@ const char HTML_BODY[] =
     "</div>"
     "</body></html>";
 
-struct http_state
-{
+struct http_state{
     char response[4096];
     size_t len;
     size_t sent;
@@ -303,26 +298,37 @@ int main()
 
         // Mede a distância
         hc_sr04_get_distance(&hc_sr04);
-        hc_sr04_distance_cm = hc_sr04.distance_cm;
-        printf("Distancia: %.2f cm\n", hc_sr04_distance_cm);
+        printf("%.2f\n", hc_sr04.distance_cm);
 
-        // --- Lógica de Controle da Bomba ---
-        // Se a distância medida for maior que o nível mínimo (água baixa), liga a bomba.
-        if (hc_sr04_distance_cm > nivel_minimo) {
-            bomba_ligada = true;
-        } 
-        // Se a distância medida for menor que o nível máximo (água alta), desliga a bomba.
-        else if (hc_sr04_distance_cm < nivel_maximo) {
-            bomba_ligada = false;
-        }
-        
-        // Atualiza o estado do pino da bomba
-        gpio_put(BOMBA_PIN, bomba_ligada);
+        // Leitura dos valores analógicos
+        // adc_select_input(0);
+        // uint16_t adc_value_x = adc_read();
+        // adc_select_input(1);
+        // uint16_t adc_value_y = adc_read();
 
-        // O código do display OLED foi comentado para focar na funcionalidade web,
-        // mas pode ser reativado se necessário.
-        
-        sleep_ms(500);
+        // sprintf(str_x, "%d", adc_value_x);            // Converte o inteiro em string
+        // sprintf(str_y, "%d", adc_value_y);            // Converte o inteiro em string
+        // ssd1306_fill(&ssd, !cor);                     // Limpa o display
+        // ssd1306_rect(&ssd, 3, 3, 122, 60, cor, !cor); // Desenha um retângulo
+        // ssd1306_line(&ssd, 3, 25, 123, 25, cor);      // Desenha uma linha
+        // ssd1306_line(&ssd, 3, 37, 123, 37, cor);      // Desenha uma linha
+
+        // ssd1306_draw_string(&ssd, "CEPEDI   TIC37", 8, 6); // Desenha uma string
+        // ssd1306_draw_string(&ssd, "EMBARCATECH", 20, 16);  // Desenha uma string
+        // ssd1306_draw_string(&ssd, ip_str, 10, 28);
+        // ssd1306_draw_string(&ssd, "X    Y    PB", 20, 41);           // Desenha uma string
+        // ssd1306_line(&ssd, 44, 37, 44, 60, cor);                     // Desenha uma linha vertical
+        // ssd1306_draw_string(&ssd, str_x, 8, 52);                     // Desenha uma string
+        // ssd1306_line(&ssd, 84, 37, 84, 60, cor);                     // Desenha uma linha vertical
+        // ssd1306_draw_string(&ssd, str_y, 49, 52);                    // Desenha uma string
+        // ssd1306_rect(&ssd, 52, 90, 8, 8, cor, !gpio_get(BOTAO_JOY)); // Desenha um retângulo
+        // ssd1306_rect(&ssd, 52, 102, 8, 8, cor, !gpio_get(BOTAO_A));  // Desenha um retângulo
+        // ssd1306_rect(&ssd, 52, 114, 8, 8, cor, !cor);                // Desenha um retângulo
+        // ssd1306_send_data(&ssd);                                     // Atualiza o display
+
+
+
+        sleep_ms(300);
     }
 
     cyw43_arch_deinit();
