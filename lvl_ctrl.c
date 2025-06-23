@@ -10,6 +10,7 @@
 #include "ssd1306.h"
 #include "font.h"
 #include "pico/bootrom.h"
+#include "HC_SR04.h"
 
 #define btn_b 6
 #define led_pin 12
@@ -18,13 +19,16 @@
 #define joy_x 26
 #define joy_y 27
 
-#define WIFI_SSID "Seu SSID"
-#define WIFI_PASS "Sua Senha"
+#define WIFI_SSID "XXX"
+#define WIFI_PASS "XXX"
 
 #define I2C_PORT_DISP i2c1
 #define I2C_SDA_DISP 14
 #define I2C_SCL_DISP 15
 #define endereco 0x3C
+
+#define ECHO_PIN 16
+#define TRIG_PIN 17
 
 const char HTML_BODY[] =
     "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Controle do LED</title>"
@@ -104,17 +108,6 @@ int main(){
     stdio_init_all();
     sleep_ms(2000);
 
-    gpio_init(led_pin);
-    gpio_set_dir(led_pin, GPIO_OUT);
-
-    gpio_init(btn_a);
-    gpio_set_dir(btn_a, GPIO_IN);
-    gpio_pull_up(btn_a);
-
-    gpio_init(btn_joy);
-    gpio_set_dir(btn_joy, GPIO_IN);
-    gpio_pull_up(btn_joy);
-
     adc_init();
     adc_gpio_init(joy_x);
     adc_gpio_init(joy_y);
@@ -132,6 +125,10 @@ int main(){
     ssd1306_draw_string(&ssd, "Iniciando Wi-Fi", 0, 0);
     ssd1306_draw_string(&ssd, "Aguarde...", 0, 30);    
     ssd1306_send_data(&ssd);
+
+    // Iniciando sensor utlrassonico
+    HC_SR04_t hc_sr04; 
+    hc_sr04_init(&hc_sr04, TRIG_PIN, ECHO_PIN);
 
     if (cyw43_arch_init())
     {
@@ -163,22 +160,24 @@ int main(){
     char str_x[5]; // Buffer para armazenar a string
     char str_y[5]; // Buffer para armazenar a string
     bool cor = true;
-    while (true)
-    {
+    while (true){
         cyw43_arch_poll();
 
-        // Leitura dos valores analógicos
-        adc_select_input(0);
-        uint16_t adc_value_x = adc_read();
-        adc_select_input(1);
-        uint16_t adc_value_y = adc_read();
+        hc_sr04_get_distance(&hc_sr04);
+        printf("%.2f\n", hc_sr04.distance_cm);
 
-        sprintf(str_x, "%d", adc_value_x);            // Converte o inteiro em string
-        sprintf(str_y, "%d", adc_value_y);            // Converte o inteiro em string
-        ssd1306_fill(&ssd, !cor);                     // Limpa o display
-        ssd1306_rect(&ssd, 3, 3, 122, 60, cor, !cor); // Desenha um retângulo
-        ssd1306_line(&ssd, 3, 25, 123, 25, cor);      // Desenha uma linha
-        ssd1306_line(&ssd, 3, 37, 123, 37, cor);      // Desenha uma linha
+        // Leitura dos valores analógicos
+        // adc_select_input(0);
+        // uint16_t adc_value_x = adc_read();
+        // adc_select_input(1);
+        // uint16_t adc_value_y = adc_read();
+
+        // sprintf(str_x, "%d", adc_value_x);            // Converte o inteiro em string
+        // sprintf(str_y, "%d", adc_value_y);            // Converte o inteiro em string
+        // ssd1306_fill(&ssd, !cor);                     // Limpa o display
+        // ssd1306_rect(&ssd, 3, 3, 122, 60, cor, !cor); // Desenha um retângulo
+        // ssd1306_line(&ssd, 3, 25, 123, 25, cor);      // Desenha uma linha
+        // ssd1306_line(&ssd, 3, 37, 123, 37, cor);      // Desenha uma linha
 
         ssd1306_draw_string(&ssd, "CEPEDI   TIC37", 8, 6); // Desenha uma string
         ssd1306_draw_string(&ssd, "EMBARCATECH", 20, 16);  // Desenha uma string
@@ -201,9 +200,20 @@ int main(){
 }
 
 void setup_gpio(){
+    gpio_init(led_pin);
+    gpio_set_dir(led_pin, GPIO_OUT);
+
     gpio_init(btn_b);
     gpio_set_dir(btn_b, GPIO_IN);
     gpio_pull_up(btn_b);
+
+    gpio_init(btn_a);
+    gpio_set_dir(btn_a, GPIO_IN);
+    gpio_pull_up(btn_a);
+
+    gpio_init(btn_joy);
+    gpio_set_dir(btn_joy, GPIO_IN);
+    gpio_pull_up(btn_joy);
 }
 
 static err_t http_sent(void *arg, struct tcp_pcb *tpcb, u16_t len){
