@@ -19,8 +19,8 @@
 #define joy_x 26
 #define joy_y 27
 
-#define WIFI_SSID "XXX"
-#define WIFI_PASS "XXX"
+#define WIFI_SSID "bythesword [2.4GHz]"
+#define WIFI_PASS "30317512"
 
 #define I2C_PORT_DISP i2c1
 #define I2C_SDA_DISP 14
@@ -101,12 +101,13 @@ static void start_http_server(void);
 void gpio_irq_handler(uint gpio, uint32_t events);
 
 int main(){
+
     setup_gpio();
+    stdio_init_all();
 
     gpio_set_irq_enabled_with_callback(btn_b, GPIO_IRQ_EDGE_FALL, true, &gpio_irq_handler);
 
-    stdio_init_all();
-    sleep_ms(2000);
+    sleep_ms(1000);
 
     adc_init();
     adc_gpio_init(joy_x);
@@ -160,24 +161,13 @@ int main(){
     char str_x[5]; // Buffer para armazenar a string
     char str_y[5]; // Buffer para armazenar a string
     bool cor = true;
+
     while (true){
         cyw43_arch_poll();
 
         hc_sr04_get_distance(&hc_sr04);
         printf("%.2f\n", hc_sr04.distance_cm);
 
-        // Leitura dos valores analógicos
-        // adc_select_input(0);
-        // uint16_t adc_value_x = adc_read();
-        // adc_select_input(1);
-        // uint16_t adc_value_y = adc_read();
-
-        // sprintf(str_x, "%d", adc_value_x);            // Converte o inteiro em string
-        // sprintf(str_y, "%d", adc_value_y);            // Converte o inteiro em string
-        // ssd1306_fill(&ssd, !cor);                     // Limpa o display
-        // ssd1306_rect(&ssd, 3, 3, 122, 60, cor, !cor); // Desenha um retângulo
-        // ssd1306_line(&ssd, 3, 25, 123, 25, cor);      // Desenha uma linha
-        // ssd1306_line(&ssd, 3, 37, 123, 37, cor);      // Desenha uma linha
 
         ssd1306_draw_string(&ssd, "CEPEDI   TIC37", 8, 6); // Desenha uma string
         ssd1306_draw_string(&ssd, "EMBARCATECH", 20, 16);  // Desenha uma string
