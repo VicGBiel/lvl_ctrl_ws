@@ -11,14 +11,15 @@
 #include "font.h"
 #include "HC_SR04.h"
 
-#define LED_PIN 12
+// Pino da bomba (reutilizando o pino do LED original)
+#define BOMBA_PIN 12 
 #define BOTAO_A 5
 #define BOTAO_JOY 22
 #define JOYSTICK_X 26
 #define JOYSTICK_Y 27
 
-#define WIFI_SSID "XXX"
-#define WIFI_PASS "XXX"
+#define WIFI_SSID "Liz Linda"
+#define WIFI_PASS "Lizm2016"
 
 #define I2C_PORT_DISP i2c1
 #define I2C_SDA_DISP 14
@@ -28,61 +29,69 @@
 #define TRIG_PIN 17
 #define ECHO_PIN 16
 
-const char HTML_BODY[] =
-    "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Controle do LED</title>"
-    "<style>"
-    "body { font-family: sans-serif; text-align: center; padding: 10px; margin: 0; background: #f9f9f9; }"
-    ".botao { font-size: 20px; padding: 10px 30px; margin: 10px; border: none; border-radius: 8px; }"
-    ".on { background: #4CAF50; color: white; }"
-    ".off { background: #f44336; color: white; }"
-    ".barra { width: 30%; background: #ddd; border-radius: 6px; overflow: hidden; margin: 0 auto 15px auto; height: 20px; }"
+// --- Variáveis Globais para Controle de Nível ---
+float nivel_minimo = 20.0;  // Nível baixo (em cm). Se a distância for MAIOR que isso, a bomba liga.
+float nivel_maximo = 5.0;   // Nível alto (em cm). Se a distância for MENOR que isso, a bomba desliga.
+bool bomba_ligada = false;
 
-    ".preenchimento { height: 100%; transition: width 0.3s ease; }"
-    "#barra_x { background: #2196F3; }"
-    "#barra_y { background:rgb(177, 96, 153); }"
-    ".label { font-weight: bold; margin-bottom: 5px; display: block; }"
-    ".bolinha { width: 20px; height: 20px; border-radius: 50%; display: inline-block; margin-left: 10px; background: #ccc; transition: background 0.3s ease; }"
-    "@media (max-width: 600px) { .botao { width: 80%; font-size: 18px; } }"
+// --- HTML Modificado ---
+const char HTML_BODY[] =
+    "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Controle de Nivel do Reservatorio</title>"
+    "<style>"
+    "body { font-family: sans-serif; text-align: center; padding: 20px; margin: 0; background: #f0f7ff; color: #333; }"
+    "h1 { color: #0056b3; }"
+    ".container { max-width: 500px; margin: auto; background: white; padding: 20px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }"
+    ".status { font-size: 22px; margin: 20px 0; }"
+    ".status-label { font-weight: bold; color: #555; }"
+    ".status-value { padding: 5px 10px; border-radius: 5px; color: white; }"
+    "#bomba_status.ligada { background-color: #28a745; }"
+    "#bomba_status.desligada { background-color: #dc3545; }"
+    "form { margin-top: 30px; display: flex; flex-direction: column; gap: 15px; }"
+    "label { font-weight: bold; text-align: left; }"
+    "input[type='number'] { padding: 10px; border: 1px solid #ccc; border-radius: 5px; font-size: 16px; }"
+    "button { font-size: 18px; padding: 12px 25px; border: none; border-radius: 8px; background: #007bff; color: white; cursor: pointer; transition: background-color 0.3s; }"
+    "button:hover { background: #0056b3; }"
     "</style>"
     "<script>"
-    "function sendCommand(cmd) { fetch('/led/' + cmd); }"
     "function atualizar() {"
     "  fetch('/estado').then(res => res.json()).then(data => {"
-    "    document.getElementById('estado').innerText = data.led ? 'Ligado' : 'Desligado';"
-    "    document.getElementById('x_valor').innerText = data.x;"
-    "    document.getElementById('y_valor').innerText = data.y;"
-    "    document.getElementById('botao').innerText = data.botao ? 'Pressionado' : 'Solto';"
-    "    document.getElementById('joy').innerText = data.joy ? 'Pressionado' : 'Solto';"
-    "    document.getElementById('bolinha_a').style.background = data.botao ? '#2126F3' : '#ccc';"
-    "    document.getElementById('bolinha_joy').style.background = data.joy ? '#4C7F50' : '#ccc';"
-    "    document.getElementById('barra_x').style.width = Math.round(data.x / 4095 * 100) + '%';"
-    "    document.getElementById('barra_y').style.width = Math.round(data.y / 4095 * 100) + '%';"
+    "    document.getElementById('nivel_atual').innerText = data.nivel_atual.toFixed(2) + ' cm';"
+    "    const bombaStatusEl = document.getElementById('bomba_status');"
+    "    bombaStatusEl.innerText = data.bomba_status ? 'Ligada' : 'Desligada';"
+    "    bombaStatusEl.className = 'status-value ' + (data.bomba_status ? 'ligada' : 'desligada');"
+    "    if (document.activeElement.type !== 'number') {" // Não atualiza os inputs se o usuário estiver digitando
+    "      document.getElementById('min').value = data.nivel_minimo;"
+    "      document.getElementById('max').value = data.nivel_maximo;"
+    "    }"
     "  });"
     "}"
-    "setInterval(atualizar, 1000);"
+    "function salvarConfig(event) {"
+    "  event.preventDefault();"
+    "  const min_val = document.getElementById('min').value;"
+    "  const max_val = document.getElementById('max').value;"
+    "  fetch('/config', {"
+    "    method: 'POST',"
+    "    headers: {'Content-Type': 'application/x-www-form-urlencoded'},"
+    "    body: 'min=' + min_val + '&max=' + max_val"
+    "  }).then(() => alert('Configuracao salva!'));"
+    "}"
+    "setInterval(atualizar, 2000);"
+    "window.onload = atualizar;"
     "</script></head><body>"
-
-    "<h1>Controle do LED</h1>"
-
-    "<p>Estado do LED: <span id='estado'>--</span></p>"
-
-    "<p class='label'>Joystick X: <span id='x_valor'>--</span></p>"
-    "<div class='barra'><div id='barra_x' class='preenchimento'></div></div>"
-
-    "<p class='label'>Joystick Y: <span id='y_valor'>--</span></p>"
-    "<div class='barra'><div id='barra_y' class='preenchimento'></div></div>"
-
-    "<p class='label'>Botão A: <span id='botao'>--</span> <span id='bolinha_a' class='bolinha'></span></p>"
-    "<p class='label'>Botão do Joystick: <span id='joy'>--</span> <span id='bolinha_joy' class='bolinha'></span></p>"
-
-    "<button class='botao on' onclick=\"sendCommand('on')\">Ligar</button>"
-    "<button class='botao off' onclick=\"sendCommand('off')\">Desligar</button>"
-
-    "<hr style='margin-top: 20px;'>"
-    "<p style='font-size: 15px; color: #336699; font-style: italic; max-width: 90%; margin: 10px auto;'>"
-    "Utilização da BitDogLab para exemplificar a comunicação via rede Wi-Fi utilizando o protocolo HTML com JavaScript"
-    "</p>"
-
+    "<div class='container'>"
+    "<h1>Controle de Nivel do Reservatorio</h1>"
+    "<div class='status'><span class='status-label'>Nivel Atual: </span><span id='nivel_atual'>--</span></div>"
+    "<div class='status'><span class='status-label'>Status da Bomba: </span><span id='bomba_status' class='status-value desligada'>--</span></div>"
+    "<hr>"
+    "<form onsubmit='salvarConfig(event)'>"
+    "<h2>Configuracao</h2>"
+    "<label for='max'>Nivel Maximo (Distancia em cm do sensor):</label>"
+    "<input type='number' id='max' name='max' step='0.1' required>"
+    "<label for='min'>Nivel Minimo (Distancia em cm do sensor):</label>"
+    "<input type='number' id='min' name='min' step='0.1' required>"
+    "<button type='submit'>Salvar</button>"
+    "</form>"
+    "</div>"
     "</body></html>";
 
 struct http_state
@@ -122,45 +131,32 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
     }
     hs->sent = 0;
 
-    if (strstr(req, "GET /led/on"))
-    {
-        gpio_put(LED_PIN, 1);
-        const char *txt = "Ligado";
+    // --- Endpoint para receber a configuração de níveis (MÍNIMO e MÁXIMO) ---
+    if (strstr(req, "POST /config")) {
+        char *body = strstr(req, "\r\n\r\n");
+        if (body) {
+            body += 4; // Pula os caracteres \r\n\r\n para chegar ao corpo
+            float new_min, new_max;
+            if (sscanf(body, "min=%f&max=%f", &new_min, &new_max) == 2) {
+                nivel_minimo = new_min;
+                nivel_maximo = new_max;
+                printf("Novos valores recebidos: MIN=%.2f, MAX=%.2f\n", nivel_minimo, nivel_maximo);
+            }
+        }
+        // Responde com um simples 200 OK
         hs->len = snprintf(hs->response, sizeof(hs->response),
                            "HTTP/1.1 200 OK\r\n"
-                           "Content-Type: text/plain\r\n"
-                           "Content-Length: %d\r\n"
-                           "Connection: close\r\n"
-                           "\r\n"
-                           "%s",
-                           (int)strlen(txt), txt);
+                           "Connection: close\r\n\r\n");
     }
-    else if (strstr(req, "GET /led/off"))
-    {
-        gpio_put(LED_PIN, 0);
-        const char *txt = "Desligado";
-        hs->len = snprintf(hs->response, sizeof(hs->response),
-                           "HTTP/1.1 200 OK\r\n"
-                           "Content-Type: text/plain\r\n"
-                           "Content-Length: %d\r\n"
-                           "Connection: close\r\n"
-                           "\r\n"
-                           "%s",
-                           (int)strlen(txt), txt);
-    }
+    // --- Endpoint para enviar o estado atual (NÍVEL e BOMBA) ---
     else if (strstr(req, "GET /estado"))
     {
-        adc_select_input(0);
-        uint16_t x = adc_read();
-        adc_select_input(1);
-        uint16_t y = adc_read();
-        int botao = !gpio_get(BOTAO_A);
-        int joy = !gpio_get(BOTAO_JOY);
-
-        char json_payload[96];
+        extern float hc_sr04_distance_cm; // Usa a distância já medida no loop principal
+        
+        char json_payload[128];
         int json_len = snprintf(json_payload, sizeof(json_payload),
-                                "{\"led\":%d,\"x\":%d,\"y\":%d,\"botao\":%d,\"joy\":%d}\r\n",
-                                gpio_get(LED_PIN), x, y, botao, joy);
+                                "{\"nivel_atual\":%.2f,\"bomba_status\":%d,\"nivel_minimo\":%.2f,\"nivel_maximo\":%.2f}\r\n",
+                                hc_sr04_distance_cm, bomba_ligada, nivel_minimo, nivel_maximo);
 
         printf("[DEBUG] JSON: %s\n", json_payload);
 
@@ -173,6 +169,7 @@ static err_t http_recv(void *arg, struct tcp_pcb *tpcb, struct pbuf *p, err_t er
                            "%s",
                            json_len, json_payload);
     }
+    // --- Serve a página HTML principal ---
     else
     {
         hs->len = snprintf(hs->response, sizeof(hs->response),
@@ -226,6 +223,8 @@ void gpio_irq_handler(uint gpio, uint32_t events)
     reset_usb_boot(0, 0);
 }
 
+float hc_sr04_distance_cm = 0.0; // Variável global para a distância
+
 int main()
 {
     gpio_init(BOTAO_B);
@@ -236,9 +235,11 @@ int main()
     stdio_init_all();
     sleep_ms(2000);
 
-    gpio_init(LED_PIN);
-    gpio_set_dir(LED_PIN, GPIO_OUT);
+    // Configura o pino da bomba como saída
+    gpio_init(BOMBA_PIN);
+    gpio_set_dir(BOMBA_PIN, GPIO_OUT);
 
+    // --- O restante das inicializações (botões, ADC, I2C) permanecem ---
     gpio_init(BOTAO_A);
     gpio_set_dir(BOTAO_A, GPIO_IN);
     gpio_pull_up(BOTAO_A);
@@ -265,7 +266,7 @@ int main()
     ssd1306_draw_string(&ssd, "Aguarde...", 0, 30);    
     ssd1306_send_data(&ssd);
 
-    // Iniciando sensor utlrassonico
+    // Iniciando sensor ultrassônico
     HC_SR04_t hc_sr04; 
     hc_sr04_init(&hc_sr04, TRIG_PIN, ECHO_PIN);
 
@@ -296,44 +297,32 @@ int main()
     ssd1306_send_data(&ssd);
 
     start_http_server();
-    char str_x[5]; // Buffer para armazenar a string
-    char str_y[5]; // Buffer para armazenar a string
-    bool cor = true;
+
     while (true){
         cyw43_arch_poll();
 
+        // Mede a distância
         hc_sr04_get_distance(&hc_sr04);
-        printf("%.2f\n", hc_sr04.distance_cm);
+        hc_sr04_distance_cm = hc_sr04.distance_cm;
+        printf("Distancia: %.2f cm\n", hc_sr04_distance_cm);
 
-        // Leitura dos valores analógicos
-        // adc_select_input(0);
-        // uint16_t adc_value_x = adc_read();
-        // adc_select_input(1);
-        // uint16_t adc_value_y = adc_read();
+        // --- Lógica de Controle da Bomba ---
+        // Se a distância medida for maior que o nível mínimo (água baixa), liga a bomba.
+        if (hc_sr04_distance_cm > nivel_minimo) {
+            bomba_ligada = true;
+        } 
+        // Se a distância medida for menor que o nível máximo (água alta), desliga a bomba.
+        else if (hc_sr04_distance_cm < nivel_maximo) {
+            bomba_ligada = false;
+        }
+        
+        // Atualiza o estado do pino da bomba
+        gpio_put(BOMBA_PIN, bomba_ligada);
 
-        // sprintf(str_x, "%d", adc_value_x);            // Converte o inteiro em string
-        // sprintf(str_y, "%d", adc_value_y);            // Converte o inteiro em string
-        // ssd1306_fill(&ssd, !cor);                     // Limpa o display
-        // ssd1306_rect(&ssd, 3, 3, 122, 60, cor, !cor); // Desenha um retângulo
-        // ssd1306_line(&ssd, 3, 25, 123, 25, cor);      // Desenha uma linha
-        // ssd1306_line(&ssd, 3, 37, 123, 37, cor);      // Desenha uma linha
-
-        // ssd1306_draw_string(&ssd, "CEPEDI   TIC37", 8, 6); // Desenha uma string
-        // ssd1306_draw_string(&ssd, "EMBARCATECH", 20, 16);  // Desenha uma string
-        // ssd1306_draw_string(&ssd, ip_str, 10, 28);
-        // ssd1306_draw_string(&ssd, "X    Y    PB", 20, 41);           // Desenha uma string
-        // ssd1306_line(&ssd, 44, 37, 44, 60, cor);                     // Desenha uma linha vertical
-        // ssd1306_draw_string(&ssd, str_x, 8, 52);                     // Desenha uma string
-        // ssd1306_line(&ssd, 84, 37, 84, 60, cor);                     // Desenha uma linha vertical
-        // ssd1306_draw_string(&ssd, str_y, 49, 52);                    // Desenha uma string
-        // ssd1306_rect(&ssd, 52, 90, 8, 8, cor, !gpio_get(BOTAO_JOY)); // Desenha um retângulo
-        // ssd1306_rect(&ssd, 52, 102, 8, 8, cor, !gpio_get(BOTAO_A));  // Desenha um retângulo
-        // ssd1306_rect(&ssd, 52, 114, 8, 8, cor, !cor);                // Desenha um retângulo
-        // ssd1306_send_data(&ssd);                                     // Atualiza o display
-
-
-
-        sleep_ms(300);
+        // O código do display OLED foi comentado para focar na funcionalidade web,
+        // mas pode ser reativado se necessário.
+        
+        sleep_ms(500);
     }
 
     cyw43_arch_deinit();
