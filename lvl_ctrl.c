@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include "ssd1306.h"
 #include "font.h"
+#include "HC_SR04.h"
 
 #define LED_PIN 12
 #define BOTAO_A 5
@@ -16,13 +17,16 @@
 #define JOYSTICK_X 26
 #define JOYSTICK_Y 27
 
-#define WIFI_SSID "Seu SSID"
-#define WIFI_PASS "Sua Senha"
+#define WIFI_SSID "XXX"
+#define WIFI_PASS "XXX"
 
 #define I2C_PORT_DISP i2c1
 #define I2C_SDA_DISP 14
 #define I2C_SCL_DISP 15
 #define endereco 0x3C
+
+#define TRIG_PIN 17
+#define ECHO_PIN 16
 
 const char HTML_BODY[] =
     "<!DOCTYPE html><html><head><meta charset='UTF-8'><title>Controle do LED</title>"
@@ -261,6 +265,10 @@ int main()
     ssd1306_draw_string(&ssd, "Aguarde...", 0, 30);    
     ssd1306_send_data(&ssd);
 
+    // Iniciando sensor utlrassonico
+    HC_SR04_t hc_sr04; 
+    hc_sr04_init(&hc_sr04, TRIG_PIN, ECHO_PIN);
+
     if (cyw43_arch_init())
     {
         ssd1306_fill(&ssd, false);
@@ -291,35 +299,39 @@ int main()
     char str_x[5]; // Buffer para armazenar a string
     char str_y[5]; // Buffer para armazenar a string
     bool cor = true;
-    while (true)
-    {
+    while (true){
         cyw43_arch_poll();
 
+        hc_sr04_get_distance(&hc_sr04);
+        printf("%.2f\n", hc_sr04.distance_cm);
+
         // Leitura dos valores analógicos
-        adc_select_input(0);
-        uint16_t adc_value_x = adc_read();
-        adc_select_input(1);
-        uint16_t adc_value_y = adc_read();
+        // adc_select_input(0);
+        // uint16_t adc_value_x = adc_read();
+        // adc_select_input(1);
+        // uint16_t adc_value_y = adc_read();
 
-        sprintf(str_x, "%d", adc_value_x);            // Converte o inteiro em string
-        sprintf(str_y, "%d", adc_value_y);            // Converte o inteiro em string
-        ssd1306_fill(&ssd, !cor);                     // Limpa o display
-        ssd1306_rect(&ssd, 3, 3, 122, 60, cor, !cor); // Desenha um retângulo
-        ssd1306_line(&ssd, 3, 25, 123, 25, cor);      // Desenha uma linha
-        ssd1306_line(&ssd, 3, 37, 123, 37, cor);      // Desenha uma linha
+        // sprintf(str_x, "%d", adc_value_x);            // Converte o inteiro em string
+        // sprintf(str_y, "%d", adc_value_y);            // Converte o inteiro em string
+        // ssd1306_fill(&ssd, !cor);                     // Limpa o display
+        // ssd1306_rect(&ssd, 3, 3, 122, 60, cor, !cor); // Desenha um retângulo
+        // ssd1306_line(&ssd, 3, 25, 123, 25, cor);      // Desenha uma linha
+        // ssd1306_line(&ssd, 3, 37, 123, 37, cor);      // Desenha uma linha
 
-        ssd1306_draw_string(&ssd, "CEPEDI   TIC37", 8, 6); // Desenha uma string
-        ssd1306_draw_string(&ssd, "EMBARCATECH", 20, 16);  // Desenha uma string
-        ssd1306_draw_string(&ssd, ip_str, 10, 28);
-        ssd1306_draw_string(&ssd, "X    Y    PB", 20, 41);           // Desenha uma string
-        ssd1306_line(&ssd, 44, 37, 44, 60, cor);                     // Desenha uma linha vertical
-        ssd1306_draw_string(&ssd, str_x, 8, 52);                     // Desenha uma string
-        ssd1306_line(&ssd, 84, 37, 84, 60, cor);                     // Desenha uma linha vertical
-        ssd1306_draw_string(&ssd, str_y, 49, 52);                    // Desenha uma string
-        ssd1306_rect(&ssd, 52, 90, 8, 8, cor, !gpio_get(BOTAO_JOY)); // Desenha um retângulo
-        ssd1306_rect(&ssd, 52, 102, 8, 8, cor, !gpio_get(BOTAO_A));  // Desenha um retângulo
-        ssd1306_rect(&ssd, 52, 114, 8, 8, cor, !cor);                // Desenha um retângulo
-        ssd1306_send_data(&ssd);                                     // Atualiza o display
+        // ssd1306_draw_string(&ssd, "CEPEDI   TIC37", 8, 6); // Desenha uma string
+        // ssd1306_draw_string(&ssd, "EMBARCATECH", 20, 16);  // Desenha uma string
+        // ssd1306_draw_string(&ssd, ip_str, 10, 28);
+        // ssd1306_draw_string(&ssd, "X    Y    PB", 20, 41);           // Desenha uma string
+        // ssd1306_line(&ssd, 44, 37, 44, 60, cor);                     // Desenha uma linha vertical
+        // ssd1306_draw_string(&ssd, str_x, 8, 52);                     // Desenha uma string
+        // ssd1306_line(&ssd, 84, 37, 84, 60, cor);                     // Desenha uma linha vertical
+        // ssd1306_draw_string(&ssd, str_y, 49, 52);                    // Desenha uma string
+        // ssd1306_rect(&ssd, 52, 90, 8, 8, cor, !gpio_get(BOTAO_JOY)); // Desenha um retângulo
+        // ssd1306_rect(&ssd, 52, 102, 8, 8, cor, !gpio_get(BOTAO_A));  // Desenha um retângulo
+        // ssd1306_rect(&ssd, 52, 114, 8, 8, cor, !cor);                // Desenha um retângulo
+        // ssd1306_send_data(&ssd);                                     // Atualiza o display
+
+
 
         sleep_ms(300);
     }
